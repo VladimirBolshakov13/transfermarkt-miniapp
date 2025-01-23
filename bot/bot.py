@@ -20,44 +20,79 @@ router = Router()
 # Хранение данных о текущей игре
 games = {}
 
-# Список характеристик игроков, можно добавить больше
-player_traits = {
-    "Messi": {
-        "is_alive": True,
-        "is_playing_now": True,
-        "team": "PSG",
-        "is_playing_in_top5_leagues": True,
-        "position": "forward",
-        "clubs": ["Barcelona", "PSG"],
-        "goals_scored": 700,
-        "matches_played": 800,
-        "trophies": ["Ballon d'Or", "Champions League", "La Liga"],
-        "health_status": "Excellent",
-        "on_transfer": False,
-        "birthdate": "1987-06-24",
-        "national_team": "Argentina",
-        "national_team_matches": 150,
-        "national_team_goals": 80,
-        "market_value": 100000000,
-        "highest_valuation_club": "Barcelona"
-    },
-    # Добавьте другие игроки
-}
+# Функция для получения случайного игрока из API Transfermarkt
+async def fetch_random_player():
+    random_player_id = random.randint(1, 10000)  # Предполагаем, что ID игрока лежит в диапазоне 1-10000
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(f"{API_URL}/players/{random_player_id}/profile") as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"Ошибка: статус ответа {response.status}")
+                    return None
+        except Exception as e:
+            print(f"Ошибка при обращении к API: {e}")
+            return None
+
+# Функция для получения достижений игрока
+async def get_player_achievements(player_id):
+    """Получить список достижений игрока по его ID."""
+    async with aiohttp.ClientSession() as session:
+        url = f"{API_URL}/players/{player_id}/achievements"
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()  # Получаем данные в формате JSON
+                    return data.get("achievements", [])  # Извлекаем достижения
+                return []
+        except Exception as e:
+            print(f"Ошибка при обращении к API для получения достижений: {e}")
+            return []
+
+# Функция для обработки вопросов о достижениях игрока
+async def handle_achievement_question(player_id, question):
+    """Обрабатывает вопросы о достижениях игрока."""
+    achievements = await get_player_achievements(player_id)
+    
+    if "золотой мяч" in question:
+        for achievement in achievements:
+            if achievement["title"] == "Winner Ballon d'Or":
+                count = achievement["count"]
+                seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
+                return f"Да, он выиграл Золотой мяч {count} раз(а): {seasons}."
+        return "Нет, он никогда не выигрывал Золотой мяч."
+    
+    if "лучший игрок fifa" in question:
+        for achievement in achievements:
+            if achievement["title"] == "The Best FIFA Men's Player":
+                count = achievement["count"]
+                seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
+                return f"Да, он становился лучшим игроком FIFA {count} раз(а): {seasons}."
+        return "Нет, он никогда не становился лучшим игроком FIFA."
+
+    return "Я не уверен, о каком достижении идет речь."
 
 # Функция для старта игры
 @router.message(Command("startgame"))
 async def start_game(message: Message):
     user_id = message.from_user.id
 
-    # Выбираем случайного игрока
-    random_player_name = random.choice(list(player_traits.keys()))
+    # Получаем информацию об одном случайном игроке
+    player = await fetch_random_player()
+    if not player:
+        await message.answer("Не удалось загрузить игрока. Попробуйте позже.")
+        return
 
+    random_player_name = player["name"]
+    
     # Запоминаем выбранного игрока для текущего пользователя
     games[user_id] = {
         "player_name": random_player_name,
+        "player_id": player["id"],  # Сохраняем ID игрока
         "questions_asked": 0,
-        "max_questions": 5,  # Количество вопросов, после которых игрок должен угадать
-        "traits": player_traits[random_player_name],
+        "max_questions": 10,  # Количество вопросов, после которых игрок должен угадать
+        "traits": player,  # Используем данные игрока из API
     }
 
     # Сообщаем игроку, что игра началась
@@ -75,7 +110,7 @@ async def ask_question(message: Message):
 
     game_data = games[user_id]
     player_name = game_data["player_name"]
-    traits = game_data["traits"]
+    player_id = game_data["player_id"]
 
     # Проверяем, не исчерпал ли игрок количество попыток
     if game_data["questions_asked"] >= game_data["max_questions"]:
@@ -86,58 +121,28 @@ async def ask_question(message: Message):
     # Приводим текст вопроса к нижнему регистру и убираем лишние пробелы
     question = message.text.strip().lower()
 
-    # Задаем вопросы на основе характеристик игрока
-    if "живой" in question or "играет до сих пор" in question:
-        answer = "да" if traits["is_alive"] else "нет"
-    elif "играет" in question and "команде" in question:
-        answer = f"Он играет в {traits['team']}." if traits["is_playing_now"] else "Он больше не играет."
-    elif "топ 5 лигах" in question:
-        answer = "да" if traits["is_playing_in_top5_leagues"] else "нет"
-    elif "нападающий" in question:
-        answer = "да" if traits["position"] == "forward" else "нет"
-    elif "защитник" in question:
-        answer = "да" if traits["position"] == "defender" else "нет"
-    elif "полузащитник" in question:
-        answer = "да" if traits["position"] == "midfielder" else "нет"
-    elif "вратарь" in question:
-        answer = "да" if traits["position"] == "goalkeeper" else "нет"
-    elif "клубах" in question:
-        answer = f"Он играл в {', '.join(traits['clubs'])}."
-    elif "голов" in question:
-        answer = f"Он забил {traits['goals_scored']} голов за карьеру."
-    elif "матчей" in question:
-        answer = f"Он сыграл {traits['matches_played']} матчей."
-    elif "титулы" in question:
-        answer = f"Он выиграл титулы: {', '.join(traits['trophies'])}."
-    elif "состояние здоровья" in question:
-        answer = f"Его состояние здоровья: {traits['health_status']}."
-    elif "на трансфере" in question:
-        answer = "да" if traits["on_transfer"] else "нет"
-    elif "возраст" in question:
-        age = 2025 - int(traits["birthdate"].split("-")[0])  # Предполагаем, что текущий год 2025
-        answer = f"Ему {age} лет."
-    elif "родился" in question:
-        answer = f"Он родился {traits['birthdate']}."
-    elif "карьеры" in question:
-        career_start = 2000  # Пример, можно подставить реальную дату начала карьеры
-        answer = f"Он начал свою карьеру в футболе в {career_start} году."
-    elif "национальной сборной" in question:
-        answer = f"Он играет за {traits['national_team']}."
-    elif "матчей за страну" in question:
-        answer = f"Он сыграл {traits['national_team_matches']} матчей за свою страну."
-    elif "голы за сборную" in question:
-        answer = f"Он забил {traits['national_team_goals']} голов за сборную."
-    elif "рыночная стоимость" in question:
-        answer = f"Его рыночная стоимость: €{traits['market_value']}."
-    elif "клубе выше всего" in question:
-        answer = f"Его высшая оценка была в клубе {traits['highest_valuation_club']}."
-    else:
-        answer = "Я не понял вопрос, задайте что-то другое."
+    # Проверяем, пытается ли пользователь угадать игрока
+    if question.startswith("это ") and question.endswith("?"):
+        guessed_player_name = question[4:-1]  # Извлекаем имя игрока
+        if guessed_player_name.lower() == player_name.lower():
+            await message.answer(f"🎉 Поздравляю! Вы угадали: {player_name}.")
+            del games[user_id]  # Завершаем игру
+            return
+        else:
+            await message.answer("Неверно, попробуйте ещё раз!")
+            return
+
+    # Обработка вопросов о достижениях
+    if "золотой мяч" in question or "лучший игрок fifa" in question:
+        answer = await handle_achievement_question(player_id, question)
+        await message.answer(f"Ответ: {answer}")
+        game_data["questions_asked"] += 1
+        return
 
     # Увеличиваем счетчик заданных вопросов
     game_data["questions_asked"] += 1
 
-    await message.answer(f"Ответ: {answer}")
+    await message.answer("Я не знаю ответа на этот вопрос, попробуйте задать другой.")
 
 # Функция для угадывания игрока
 @router.message(Command("guess"))
@@ -153,23 +158,25 @@ async def guess_player(message: Message):
     player_name = game_data["player_name"]
 
     # Если игрок думает, что угадал
-    if message.text.lower() == player_name.lower():
+    guessed_player_name = message.text.split(" ", 1)[1].strip()
+    if guessed_player_name.lower() == player_name.lower():
         await message.answer(f"🎉 Поздравляю! Вы угадали: {player_name}.")
         del games[user_id]  # Завершаем игру
     else:
         await message.answer("Неверно, попробуйте ещё раз!")
 
+# Инфо о пользователе
+@router.message(Command("info"))
+async def info(message: Message):
+    await message.answer("Эта игра позволяет вам угадать футбольного игрока, задавая вопросы.")
+
+# Подключаем маршрутизатор
+dp.include_router(router)
+
+# Запуск бота без executor
 async def main():
-    # Регистрируем маршруты
-    dp.include_router(router)
-
-    # Удаляем старые вебхуки, чтобы избежать конфликтов
-    await bot.delete_webhook(drop_pending_updates=True)
-
-    # Запускаем поллинг
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     import asyncio
-
     asyncio.run(main())
