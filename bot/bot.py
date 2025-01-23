@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import aiohttp
 from aiogram import Bot, Dispatcher, Router
@@ -22,37 +23,79 @@ games = {}
 
 # Функция для получения случайного игрока из API Transfermarkt
 async def fetch_random_player():
-    random_player_id = random.randint(1, 10000)  # Предполагаем, что ID игрока лежит в диапазоне 1-10000
+    # Загружаем список футболистов из файла
+    try:
+        with open('ballon_dor_winners.json', 'r', encoding='utf-8') as file:
+            players = json.load(file)
+    except Exception as e:
+        print(f"Ошибка при загрузке файла: {e}")
+        return None
+
+    # Случайным образом выбираем игрока из списка
+    random_player_name = random.choice(players)['name']
+
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(f"{API_URL}/players/{random_player_id}/profile") as response:
+            # Поиск игрока по имени
+            async with session.get(f"{API_URL}/players/search/{random_player_name}") as response:
                 if response.status == 200:
-                    return await response.json()
+                    search_results = await response.json()
+
+                    if search_results['results']:
+                        # Выбираем первого найденного игрока
+                        player_data = search_results['results'][0]
+                        player_id = player_data['id']
+                        
+                        # Запрашиваем профиль игрока по ID
+                        async with session.get(f"{API_URL}/players/{player_id}/profile") as profile_response:
+                            if profile_response.status == 200:
+                                return await profile_response.json()
+                            else:
+                                print(f"Ошибка при получении профиля: статус ответа {profile_response.status}")
+                                profile_content = await profile_response.text()
+                                print(f"Содержание ошибки: {profile_content}")
+                    else:
+                        print(f"Игрок {random_player_name} не найден в результате поиска.")
                 else:
-                    print(f"Ошибка: статус ответа {response.status}")
-                    return None
+                    print(f"Ошибка поиска игрока: статус ответа {response.status}")
+                    search_content = await response.text()
+                    print(f"Содержание ошибки: {search_content}")
         except Exception as e:
             print(f"Ошибка при обращении к API: {e}")
-            return None
+
+    return None
 
 # Функция для получения достижений игрока
 async def get_player_achievements(player_id):
-    """Получить список достижений игрока по его ID."""
     async with aiohttp.ClientSession() as session:
         url = f"{API_URL}/players/{player_id}/achievements"
         try:
             async with session.get(url) as response:
                 if response.status == 200:
-                    data = await response.json()  # Получаем данные в формате JSON
-                    return data.get("achievements", [])  # Извлекаем достижения
+                    data = await response.json()
+                    return data.get("achievements", [])
                 return []
         except Exception as e:
             print(f"Ошибка при обращении к API для получения достижений: {e}")
             return []
 
+# Функция для получения страны клуба игрока
+async def get_player_club_country(player_id):
+    async with aiohttp.ClientSession() as session:
+        url = f"{API_URL}/clubs/search/{player_id}"
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data["results"]:
+                        return data["results"][0]["country"]  # Возвращаем страну клуба
+                return None
+        except Exception as e:
+            print(f"Ошибка при обращении к API для получения страны клуба: {e}")
+            return None
+
 # Функция для обработки вопросов о достижениях игрока
 async def handle_achievement_question(player_id, question):
-    """Обрабатывает вопросы о достижениях игрока."""
     achievements = await get_player_achievements(player_id)
     
     if "золотой мяч" in question:
@@ -75,7 +118,6 @@ async def handle_achievement_question(player_id, question):
 
 # Функция для обработки вопросов о позиции игрока
 async def handle_position_question(player_traits, question):
-    """Обрабатывает вопросы о позиции игрока."""
     position = player_traits["position"]["main"].lower()
     
     if "вратарь" in question:
@@ -88,6 +130,17 @@ async def handle_position_question(player_traits, question):
         return "Да" if position == "forward" else "Нет"
     
     return "Я не уверен, о какой позиции идет речь."
+
+# Функция для обработки вопросов о лиге игрока
+async def handle_league_question(player_id, question):
+    country = await get_player_club_country(player_id)
+    
+    if country:
+        if "в лиге" in question:
+            return f"Игрок выступает в лиге страны: {country}."
+        return f"Игрок играет в {country}."
+    
+    return "Я не знаю, в какой лиге играет этот игрок."
 
 # Функция для старта игры
 @router.message(Command("startgame"))
@@ -105,13 +158,12 @@ async def start_game(message: Message):
     # Запоминаем выбранного игрока для текущего пользователя
     games[user_id] = {
         "player_name": random_player_name,
-        "player_id": player["id"],  # Сохраняем ID игрока
+        "player_id": player["id"],
         "questions_asked": 0,
-        "max_questions": 10,  # Количество вопросов, после которых игрок должен угадать
-        "traits": player,  # Используем данные игрока из API
+        "max_questions": 10,
+        "traits": player,
     }
 
-    # Сообщаем игроку, что игра началась
     await message.answer(f"Игра началась! Задавайте вопросы, на которые я буду отвечать 'да' или 'нет'. Попробуйте угадать, кто это!\nУ вас {games[user_id]['max_questions']} попыток!")
 
 # Функция для ответа на вопросы
@@ -119,7 +171,6 @@ async def start_game(message: Message):
 async def ask_question(message: Message):
     user_id = message.from_user.id
 
-    # Проверяем, есть ли активная игра
     if user_id not in games:
         await message.answer("Сначала начните игру, используя команду /startgame.")
         return
@@ -127,43 +178,43 @@ async def ask_question(message: Message):
     game_data = games[user_id]
     player_name = game_data["player_name"]
     player_id = game_data["player_id"]
-    player_traits = game_data["traits"]  # Получаем данные игрока
+    player_traits = game_data["traits"]
 
-    # Проверяем, не исчерпал ли игрок количество попыток
     if game_data["questions_asked"] >= game_data["max_questions"]:
         await message.answer(f"Вы исчерпали количество попыток. Игрок был {player_name}. Для начала новой игры используйте команду /startgame.")
-        del games[user_id]  # Завершаем игру
+        del games[user_id]
         return
 
-    # Приводим текст вопроса к нижнему регистру и убираем лишние пробелы
     question = message.text.strip().lower()
 
-    # Проверяем, пытается ли пользователь угадать игрока
     if question.startswith("это ") and question.endswith("?"):
-        guessed_player_name = question[4:-1]  # Извлекаем имя игрока
+        guessed_player_name = question[4:-1]
         if guessed_player_name.lower() == player_name.lower():
             await message.answer(f"🎉 Поздравляю! Вы угадали: {player_name}.")
-            del games[user_id]  # Завершаем игру
+            del games[user_id]
             return
         else:
             await message.answer("Неверно, попробуйте ещё раз!")
             return
 
-    # Обработка вопросов о позициях
     position_response = await handle_position_question(player_traits, question)
     if position_response != "Я не уверен, о какой позиции идет речь.":
         await message.answer(f"Ответ: {position_response}")
         game_data["questions_asked"] += 1
         return
 
-    # Обработка вопросов о достижениях
     if "золотой мяч" in question or "лучший игрок fifa" in question:
         answer = await handle_achievement_question(player_id, question)
         await message.answer(f"Ответ: {answer}")
         game_data["questions_asked"] += 1
         return
 
-    # Увеличиваем счетчик заданных вопросов
+    league_response = await handle_league_question(player_id, question)
+    if league_response:
+        await message.answer(f"Ответ: {league_response}")
+        game_data["questions_asked"] += 1
+        return
+
     game_data["questions_asked"] += 1
 
     await message.answer("Я не знаю ответа на этот вопрос, попробуйте задать другой.")
@@ -173,7 +224,6 @@ async def ask_question(message: Message):
 async def guess_player(message: Message):
     user_id = message.from_user.id
 
-    # Проверяем, есть ли активная игра
     if user_id not in games:
         await message.answer("Сначала начните игру, используя команду /startgame.")
         return
@@ -181,11 +231,10 @@ async def guess_player(message: Message):
     game_data = games[user_id]
     player_name = game_data["player_name"]
 
-    # Если игрок думает, что угадал
     guessed_player_name = message.text.split(" ", 1)[1].strip()
     if guessed_player_name.lower() == player_name.lower():
         await message.answer(f"🎉 Поздравляю! Вы угадали: {player_name}.")
-        del games[user_id]  # Завершаем игру
+        del games[user_id]
     else:
         await message.answer("Неверно, попробуйте ещё раз!")
 
