@@ -73,6 +73,22 @@ async def handle_achievement_question(player_id, question):
 
     return "Я не уверен, о каком достижении идет речь."
 
+# Функция для обработки вопросов о позиции игрока
+async def handle_position_question(player_traits, question):
+    """Обрабатывает вопросы о позиции игрока."""
+    position = player_traits["position"]["main"].lower()
+    
+    if "вратарь" in question:
+        return "Да" if position == "goalkeeper" else "Нет"
+    if "защитник" in question:
+        return "Да" if position == "defender" else "Нет"
+    if "полузащитник" in question:
+        return "Да" if position == "midfielder" else "Нет"
+    if "нападающий" in question:
+        return "Да" if position == "forward" else "Нет"
+    
+    return "Я не уверен, о какой позиции идет речь."
+
 # Функция для старта игры
 @router.message(Command("startgame"))
 async def start_game(message: Message):
@@ -111,6 +127,7 @@ async def ask_question(message: Message):
     game_data = games[user_id]
     player_name = game_data["player_name"]
     player_id = game_data["player_id"]
+    player_traits = game_data["traits"]  # Получаем данные игрока
 
     # Проверяем, не исчерпал ли игрок количество попыток
     if game_data["questions_asked"] >= game_data["max_questions"]:
@@ -131,6 +148,13 @@ async def ask_question(message: Message):
         else:
             await message.answer("Неверно, попробуйте ещё раз!")
             return
+
+    # Обработка вопросов о позициях
+    position_response = await handle_position_question(player_traits, question)
+    if position_response != "Я не уверен, о какой позиции идет речь.":
+        await message.answer(f"Ответ: {position_response}")
+        game_data["questions_asked"] += 1
+        return
 
     # Обработка вопросов о достижениях
     if "золотой мяч" in question or "лучший игрок fifa" in question:
