@@ -82,13 +82,22 @@ async def get_player_achievements(player_id):
 # Функция для получения страны клуба игрока
 async def get_player_club_country(player_id):
     async with aiohttp.ClientSession() as session:
-        url = f"{API_URL}/clubs/search/{player_id}"
+        # Получаем профиль игрока, чтобы узнать его клуб
+        profile_url = f"{API_URL}/players/{player_id}/profile"
         try:
-            async with session.get(url) as response:
+            async with session.get(profile_url) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    if data["results"]:
-                        return data["results"][0]["country"]  # Возвращаем страну клуба
+                    player_data = await response.json()
+                    club_name = player_data.get("club", {}).get("name")  # Получаем имя клуба игрока
+                    
+                    if club_name:
+                        # Теперь ищем клуб по имени
+                        club_search_url = f"{API_URL}/clubs/search/{club_name}"
+                        async with session.get(club_search_url) as club_response:
+                            if club_response.status == 200:
+                                club_data = await club_response.json()
+                                if club_data["results"]:
+                                    return club_data["results"][0]["country"]  # Возвращаем страну клуба
                 return None
         except Exception as e:
             print(f"Ошибка при обращении к API для получения страны клуба: {e}")
