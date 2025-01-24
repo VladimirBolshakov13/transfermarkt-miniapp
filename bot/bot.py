@@ -31,12 +31,14 @@ async def fetch_random_player():
             players = json.load(file)
     except Exception as e:
         print(f"Ошибка при загрузке файла: {e}")
-        return None
+        return "Ошибка при загрузке списка игроков."
 
     random_player_name = random.choice(players)['name']
+    print(f"Выбранный игрок: {random_player_name}")
 
     async with aiohttp.ClientSession() as session:
         try:
+            # Поиск игрока по имени
             async with session.get(f"{API_URL}/players/search/{random_player_name}") as response:
                 if response.status == 200:
                     search_results = await response.json()
@@ -49,28 +51,59 @@ async def fetch_random_player():
                             if profile_response.status == 200:
                                 profile_data = await profile_response.json()
                                 
-                                # Проверяем завершение карьеры
+                                # Проверяем параметры игрока
+                                club_info = profile_data.get('club')
                                 is_retired = profile_data.get('isRetired', False)
-                                if is_retired:
-                                    print(f"Игрок {random_player_name} завершил карьеру.")
+                                position = profile_data.get('position')
+                                citizenship = profile_data.get('citizenship')
+                                age = profile_data.get('age')
+
+                                print(f"Игрок {random_player_name} (ID: {player_id}):")
+                                print(f"  Завершил карьеру: {is_retired}")
+                                print(f"  Позиция: {position}")
+                                print(f"  Гражданство: {citizenship}")
+                                print(f"  Возраст: {age}")
+
+                                if club_info:
+                                    club_name = club_info.get('name')
+                                    club_id = club_info.get('id')
+                                    print(f"  Клуб: {club_name} (ID: {club_id})")
+                                else:
+                                    print("  Игрок не имеет клуба.")
+
+                                # Получаем достижения игрока
+                                achievements = await get_player_achievements(player_id)
+                                achievement_titles = ["World Cup winner", "Champions League winner", "Golden Boot winner (Europe)", "Winner Ballon d'Or"]
                                 
-                                # Проверяем страну, где играет
-                                club_data = profile_data.get('club', {})
-                                country = club_data.get('country', {}).get('name')
-                                if country:
-                                    print(f"Игрок {random_player_name} играет в стране: {country}.")
-                                
-                                return profile_data
+                                for title in achievement_titles:
+                                    if any(ach["title"] == title for ach in achievements):
+                                        print(f"  Игрок выиграл: {title}")
+
+                                # Запрос информации о клубе
+                                if club_info:
+                                    club_id = club_info.get('id')
+                                    country_name = await get_player_club_country(club_id)
+                                    if country_name:
+                                        print(f"  Клуб находится в стране: {country_name}")
+                                else:
+                                    print("  Игрок не имеет клуба, поэтому информация о стране недоступна.")
+
+                                return profile_data  # Возвращаем данные профиля игрока
                             else:
                                 print(f"Ошибка профиля: статус {profile_response.status}")
+                                return "Не удалось загрузить профиль игрока."
                     else:
                         print(f"Игрок {random_player_name} не найден.")
+                        return "Игрок не найден."
                 else:
                     print(f"Ошибка поиска игрока: статус {response.status}")
+                    return "Не удалось загрузить игрока."
         except Exception as e:
             print(f"Ошибка API: {e}")
+            return "Произошла ошибка при обращении к API."
 
     return None
+
 
 # Функция для получения достижений игрока
 async def get_player_achievements(player_id):
@@ -113,22 +146,52 @@ async def get_player_club_country(player_id):
 # Функция для обработки вопросов о достижениях игрока
 async def handle_achievement_question(player_id, question):
     achievements = await get_player_achievements(player_id)
-    
-    if "золотой мяч" in question:
+
+    # Приводим вопрос к нижнему регистру для удобства обработки
+    question = question.lower()
+
+    # Проверка на "Лигу чемпионов"
+    if "лигу чемпионов" in question or "лч" in question or "выиграл лч" in question:
+        for achievement in achievements:
+            if achievement["title"] == "Champions League winner":
+                count = achievement["count"]
+                seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
+                return f"Да, он выиграл Лигу чемпионов {count} раз(а): {seasons}."
+        return "Нет, он никогда не выигрывал Лигу чемпионов."
+
+    # Проверка на "золотой мяч"
+    if "золотой мяч" in question or "зм" in question or "выиграл золотой мяч" in question:
         for achievement in achievements:
             if achievement["title"] == "Winner Ballon d'Or":
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
                 return f"Да, он выиграл Золотой мяч {count} раз(а): {seasons}."
         return "Нет, он никогда не выигрывал Золотой мяч."
-    
-    if "лучший игрок fifa" in question:
+
+    # Проверка на "Чемпионат мира"
+    if "чемпионат мира" in question or "чм" in question or "выиграл чм" in question:
         for achievement in achievements:
-            if achievement["title"] == "The Best FIFA Men's Player":
+            if achievement["title"] == "World Cup winner":
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
-                return f"Да, он становился лучшим игроком FIFA {count} раз(а): {seasons}."
-        return "Нет, он никогда не становился лучшим игроком FIFA."
+                return f"Да, он выиграл Чемпионат мира {count} раз(а): {seasons}."
+        return "Нет, он никогда не выигрывал Чемпионат мира."
+
+    # Проверка на "золотую бутсу"
+    if "золотую бутсу" in question or "выиграл золотую бутсу" in question:
+        for achievement in achievements:
+            if achievement["title"] == "Golden Boot winner (Europe)":
+                count = achievement["count"]
+                seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
+                return f"Да, он выиграл Золотую бутсу {count} раз(а): {seasons}."
+        return "Нет, он никогда не выигрывал Золотую бутсу."
+
+    # Ответ на запрос о подсказке
+    if "подсказка" in question:
+        player_achievements = []
+        for achievement in achievements:
+            player_achievements.append(achievement["title"])
+        return f"Игрок имеет следующие достижения: {', '.join(player_achievements)}."
 
     return "Я не уверен, о каком достижении идет речь."
 
@@ -282,6 +345,45 @@ async def ask_question(message: Message):
     # Общее сообщение при нераспознанном вопросе
     game_data["questions_asked"] += 1
     await message.answer("Я не знаю ответа на этот вопрос, попробуйте задать другой.")
+
+async def handle_age_question(player_traits, question):
+    age = player_traits.get("age")
+    if not age:
+        return "Информация о возрасте игрока отсутствует."
+    
+    if "больше" in question:
+        try:
+            target_age = int(question.split("больше")[1].strip().split()[0])
+            return "Да" if age > target_age else "Нет"
+        except ValueError:
+            return "Я не понял возраст в вопросе."
+    
+    if "меньше" in question:
+        try:
+            target_age = int(question.split("меньше")[1].strip().split()[0])
+            return "Да" if age < target_age else "Нет"
+        except ValueError:
+            return "Я не понял возраст в вопросе."
+    
+    return "Я не знаю, что ответить на этот вопрос."
+
+async def handle_nationality_question(player_traits, question):
+    nationality = player_traits.get("nationality", {}).get("name", "").lower()
+    if not nationality:
+        return "Информация о национальности игрока отсутствует."
+    
+    if nationality in question:
+        return "Да"
+    return "Нет"
+
+async def handle_club_question(player_traits, question):
+    club = player_traits.get("club", {}).get("name", "").lower()
+    if not club:
+        return "Информация о клубе игрока отсутствует."
+    
+    if club in question.lower():
+        return "Да"
+    return "Нет"
 
 # Функция для угадывания игрока
 @router.message(Command("guess"))
