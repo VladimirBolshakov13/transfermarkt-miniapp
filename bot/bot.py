@@ -292,6 +292,27 @@ async def get_player_citizenship(player_id):
             print(f"Ошибка при обращении к API для получения гражданства: {e}")
             return []
 
+@router.message(Command("ask_age"))
+async def ask_age(message: Message):
+    user_id = message.from_user.id
+    player_data = await fetch_random_player()  # Получаем данные о случайном игроке
+
+    if player_data:
+        response = await handle_age_question(player_data, message.text)
+        await message.answer(response)
+    else:
+        await message.answer("Не удалось получить данные о игроке.")
+
+
+# Функция для обработки вопросов о возрасте игрока
+async def handle_age_question(player_data, question):
+    # Проверяем наличие возраста в данных
+    age = player_data.get('age')
+    if age is not None:
+        if "сколько ему лет" in question or "возраст" in question:
+            return f"Игроку {age} лет."
+    return "Я не знаю, сколько лет этому игроку."
+
 
 # Функция для старта игры
 @router.message(Command("startgame"))
@@ -429,13 +450,32 @@ async def guess_player(message: Message):
 
     game_data = games[user_id]
     player_name = game_data["player_name"]
+    attempts = game_data["attempts"]
 
-    guessed_player_name = message.text.split(" ", 1)[1].strip()
-    if guessed_player_name.lower() == player_name.lower():
+    # Проверяем, есть ли текст после команды
+    if len(message.text.split(" ")) < 2:
+        await message.answer("Пожалуйста, введите имя игрока после команды. Например: 'Это Зидан?'")
+        return
+
+    guessed_player_name = message.text.split(" ", 1)[1].strip().rstrip('?').strip()
+
+    # Приводим к нижнему регистру для сравнения
+    normalized_guessed_name = guessed_player_name.lower().replace(" ", "").replace("´", "").replace("'", "").replace("?", "")
+    normalized_player_name = player_name.lower().replace(" ", "").replace("´", "").replace("'", "")
+
+    # Сравниваем имена без учета регистра и специальных символов
+    if normalized_guessed_name == normalized_player_name:
         await message.answer(f"🎉 Поздравляю! Вы угадали: {player_name}.")
         del games[user_id]
     else:
-        await message.answer("Неверно, попробуйте ещё раз!")
+        attempts -= 1
+        game_data["attempts"] = attempts  # Обновляем количество попыток
+
+        if attempts <= 0:
+            await message.answer(f"Вы исчерпали все попытки! Правильный ответ: {player_name}.")
+            del games[user_id]
+        else:
+            await message.answer(f"Неверно, попробуйте ещё раз! У вас осталось {attempts} попыток.")
 
 # Инфо о пользователе
 @router.message(Command("info"))
