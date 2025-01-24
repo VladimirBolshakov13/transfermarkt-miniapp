@@ -244,7 +244,7 @@ async def handle_position_question(player_traits, question):
 
     # Полузащитники
     if "полузащитник" in question:
-        if position in ["central midfielder", "attacking midfielder", "defensive midfielder", "wide midfielder"]:
+        if position in ["central midfielder", "attacking midfield", "defensive midfielder", "wide midfielder"]:
             incorrect_attempts = 0
             return "Да"
         else:
@@ -265,6 +265,7 @@ async def handle_position_question(player_traits, question):
         return f"Увы, вы не угадали. Он играет на позиции: {position.capitalize()}."  # Отправляем позицию игрока
 
     return "Нет"
+
 
 # Функция для обработки вопросов о лиге игрока
 async def handle_league_question(player_id, question):
@@ -371,7 +372,7 @@ async def ask_question(message: Message):
             return
 
     # Обработка вопроса о позиции
-    if "позиция" in question:
+    if "вратарь" in question or "защитник" in question or "полузащитник" in question or "нападающий" in question:
         position_response = await handle_position_question(player_traits, question)
         await message.answer(f"Ответ: {position_response}")
         game_data["questions_asked"] += 1
@@ -384,37 +385,18 @@ async def ask_question(message: Message):
         game_data["questions_asked"] += 1
         return
 
-    # Если вопрос касается лиги игрока
-    league_response = await handle_league_question(player_id, question)
-    if league_response:
-        await message.answer(f"Ответ: {league_response}")
-        game_data["questions_asked"] += 1
-        return
+    # Обработка вопросов о лиге только если не было других вопросов
+    if "лига" in question or "чемпионат" in question:  # Вы можете уточнить ключевые слова для лиги
+        league_response = await handle_league_question(player_id, question)
+        if league_response:
+            await message.answer(f"Ответ: {league_response}")
+            game_data["questions_asked"] += 1
+            return
 
     # Общее сообщение при нераспознанном вопросе
     game_data["questions_asked"] += 1
     await message.answer("Я не знаю ответа на этот вопрос, попробуйте задать другой.")
 
-async def handle_age_question(player_traits, question):
-    age = player_traits.get("age")
-    if not age:
-        return "Информация о возрасте игрока отсутствует."
-    
-    if "больше" in question:
-        try:
-            target_age = int(question.split("больше")[1].strip().split()[0])
-            return "Да" if age > target_age else "Нет"
-        except ValueError:
-            return "Я не понял возраст в вопросе."
-    
-    if "меньше" in question:
-        try:
-            target_age = int(question.split("меньше")[1].strip().split()[0])
-            return "Да" if age < target_age else "Нет"
-        except ValueError:
-            return "Я не понял возраст в вопросе."
-    
-    return "Я не знаю, что ответить на этот вопрос."
 
 # Функция для обработки вопросов о гражданстве игрока
 async def handle_nationality_question(player_traits, question):
