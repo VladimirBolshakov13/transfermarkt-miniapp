@@ -149,48 +149,60 @@ async def handle_achievement_question(player_id, question):
 
     # Приводим вопрос к нижнему регистру для удобства обработки
     question = question.lower()
+    print(f"Обработанный вопрос: {question}")  # Отладка: выводим обработанный вопрос
+    print(f"Достижения игрока: {achievements}")  # Отладка: выводим достижения игрока
 
     # Проверка на "Лигу чемпионов"
-    if "лигу чемпионов" in question or "лч" in question or "выиграл лч" in question:
+    if any(keyword in question for keyword in ["лигу чемпионов", "лч", "выиграл лч"]):
+        found = False
         for achievement in achievements:
             if achievement["title"] == "Champions League winner":
+                found = True
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
                 return f"Да, он выиграл Лигу чемпионов {count} раз(а): {seasons}."
-        return "Нет, он никогда не выигрывал Лигу чемпионов."
+        if not found:
+            return "Нет, он никогда не выигрывал Лигу чемпионов."
 
     # Проверка на "золотой мяч"
-    if "золотой мяч" in question or "зм" in question or "выиграл золотой мяч" in question:
+    if any(keyword in question for keyword in ["золотой мяч", "зм", "выиграл золотой мяч"]):
+        found = False
         for achievement in achievements:
             if achievement["title"] == "Winner Ballon d'Or":
+                found = True
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
                 return f"Да, он выиграл Золотой мяч {count} раз(а): {seasons}."
-        return "Нет, он никогда не выигрывал Золотой мяч."
+        if not found:
+            return "Нет, он никогда не выигрывал Золотой мяч."
 
     # Проверка на "Чемпионат мира"
-    if "чемпионат мира" in question or "чм" in question or "выиграл чм" in question:
+    if any(keyword in question for keyword in ["чемпионат мира", "чм", "выиграл чм"]):
+        found = False
         for achievement in achievements:
             if achievement["title"] == "World Cup winner":
+                found = True
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
                 return f"Да, он выиграл Чемпионат мира {count} раз(а): {seasons}."
-        return "Нет, он никогда не выигрывал Чемпионат мира."
+        if not found:
+            return "Нет, он никогда не выигрывал Чемпионат мира."
 
     # Проверка на "золотую бутсу"
-    if "золотую бутсу" in question or "выиграл золотую бутсу" in question:
+    if any(keyword in question for keyword in ["золотую бутсу", "выиграл золотую бутсу"]):
+        found = False
         for achievement in achievements:
             if achievement["title"] == "Golden Boot winner (Europe)":
+                found = True
                 count = achievement["count"]
                 seasons = ", ".join([detail["season"]["name"] for detail in achievement["details"]])
                 return f"Да, он выиграл Золотую бутсу {count} раз(а): {seasons}."
-        return "Нет, он никогда не выигрывал Золотую бутсу."
+        if not found:
+            return "Нет, он никогда не выигрывал Золотую бутсу."
 
     # Ответ на запрос о подсказке
     if "подсказка" in question:
-        player_achievements = []
-        for achievement in achievements:
-            player_achievements.append(achievement["title"])
+        player_achievements = [achievement["title"] for achievement in achievements]
         return f"Игрок имеет следующие достижения: {', '.join(player_achievements)}."
 
     return "Я не уверен, о каком достижении идет речь."
@@ -257,13 +269,29 @@ async def handle_position_question(player_traits, question):
 # Функция для обработки вопросов о лиге игрока
 async def handle_league_question(player_id, question):
     country = await get_player_club_country(player_id)
-    
-    if country:
-        if "в лиге" in question:
-            return f"Игрок выступает в лиге страны: {country}."
-        return f"Игрок играет в {country}."
-    
+    citizenship = await get_player_citizenship(player_id)  # Новая функция для получения гражданства игрока
+
+    if country and "в лиге" in question:
+        return f"Игрок выступает в лиге страны: {country}."
+
+    if citizenship and "какая у него национальность" in question:
+        return f"Игрок имеет гражданство: {', '.join(citizenship)}."
+
     return "Я не знаю, в какой лиге играет этот игрок."
+
+async def get_player_citizenship(player_id):
+    async with aiohttp.ClientSession() as session:
+        profile_url = f"{API_URL}/players/{player_id}/profile"
+        try:
+            async with session.get(profile_url) as response:
+                if response.status == 200:
+                    player_data = await response.json()
+                    return player_data.get("citizenship", [])  # Возвращаем гражданство игрока
+                return []
+        except Exception as e:
+            print(f"Ошибка при обращении к API для получения гражданства: {e}")
+            return []
+
 
 # Функция для старта игры
 @router.message(Command("startgame"))
@@ -367,14 +395,19 @@ async def handle_age_question(player_traits, question):
     
     return "Я не знаю, что ответить на этот вопрос."
 
+# Функция для обработки вопросов о гражданстве игрока
 async def handle_nationality_question(player_traits, question):
-    nationality = player_traits.get("nationality", {}).get("name", "").lower()
-    if not nationality:
-        return "Информация о национальности игрока отсутствует."
-    
-    if nationality in question:
-        return "Да"
-    return "Нет"
+    # Проверяем наличие гражданства в данных
+    if "citizenship" not in player_traits:
+        return "Информация о гражданстве отсутствует."  # Обработка случая, когда информация отсутствует
+
+    citizenship = player_traits["citizenship"]
+    print(f"Полученное гражданство игрока: {citizenship}")  # Логируем гражданство
+
+    if "гражданство" in question:
+        return f"Игрок является гражданином: {citizenship.capitalize()}."  # Отправляем информацию о гражданстве
+
+    return "Я не уверен, о каком гражданстве идет речь."
 
 async def handle_club_question(player_traits, question):
     club = player_traits.get("club", {}).get("name", "").lower()
